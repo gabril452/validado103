@@ -107,9 +107,16 @@ export async function POST(request: NextRequest) {
     })
 
     if (!trexPayResult.success) {
-      console.error("[PIX Create] Erro TrexPay:", trexPayResult.error)
+      console.error("[PIX Create] Erro TrexPay:", trexPayResult.error, trexPayResult.message)
       return NextResponse.json(
-        { error: trexPayResult.message || "Erro ao gerar PIX" },
+        { 
+          error: trexPayResult.message || "Erro ao gerar PIX",
+          details: trexPayResult.error,
+          debug: {
+            errorCode: trexPayResult.error,
+            message: trexPayResult.message
+          }
+        },
         { status: 500 }
       )
     }

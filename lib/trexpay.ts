@@ -34,8 +34,12 @@ export interface TrexPayDepositResponse {
   idTransaction?: string
   qrCode?: string
   qrCodeBase64?: string
+  qr_code?: string
+  qr_code_base64?: string
   pixKey?: string
+  pix_key?: string
   expiresAt?: string
+  expires_at?: string
   error?: string
   message?: string
 }
@@ -151,12 +155,16 @@ export async function createPixDeposit(params: {
   const token = process.env.TREXPAY_TOKEN
   const secret = process.env.TREXPAY_SECRET
 
+  console.log("[TrexPay] Verificando credenciais...")
+  console.log("[TrexPay] Token configurado:", token ? "SIM" : "NAO")
+  console.log("[TrexPay] Secret configurado:", secret ? "SIM" : "NAO")
+
   if (!token || !secret) {
-    console.error("[TrexPay] Credenciais não configuradas")
+    console.error("[TrexPay] Credenciais não configuradas - TREXPAY_TOKEN ou TREXPAY_SECRET ausentes")
     return {
       success: false,
       error: "INVALID_CREDENTIALS",
-      message: "Credenciais da TrexPay não configuradas",
+      message: "Credenciais da TrexPay não configuradas. Verifique as variáveis TREXPAY_TOKEN e TREXPAY_SECRET.",
     }
   }
 
@@ -193,45 +201,104 @@ export async function createPixDeposit(params: {
   })
 
   try {
-    const response = await fetch(
-      `${TREXPAY_BASE_URL}/api/wallet/deposit/payment`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      }
-    )
+    const url = `${TREXPAY_BASE_URL}/api/wallet/deposit/payment`
+    console.log("[TrexPay] Enviando requisição para:", url)
+    console.log("[TrexPay] Body da requisição:", JSON.stringify({
+      ...requestBody,
+      token: token.substring(0, 8) + "***",
+      secret: "***HIDDEN***"
+    }))
 
-    const data = await response.json()
+    // Configurar timeout de 30 segundos
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeoutId)
+
+    console.log("[TrexPay] Status HTTP:", response.status)
+
+    const responseText = await response.text()
+    console.log("[TrexPay] Resposta raw:", responseText)
+
+    let data
+    try {
+      data = JSON.parse(responseText)
+    } catch (parseError) {
+      console.error("[TrexPay] Erro ao parsear resposta JSON:", parseError)
+      return {
+        success: false,
+        error: "PARSE_ERROR",
+        message: "Resposta inválida da TrexPay",
+      }
+    }
 
     if (!response.ok) {
       console.error("[TrexPay] Erro na resposta:", response.status, data)
       return {
         success: false,
         error: data.error || "API_ERROR",
-        message: data.message || `Erro HTTP ${response.status}`,
+        message: data.message || data.error || `Erro HTTP ${response.status}`,
       }
     }
 
-    console.log("[TrexPay] Depósito criado com sucesso:", data.idTransaction)
+    // A API pode retornar os dados diretamente ou dentro de um objeto "data"
+    const responseData = data.data || data
+    const transactionId = responseData.idTransaction || responseData.id_transaction || responseData.id || data.idTransaction
+    
+    console.log("[TrexPay] Dados da resposta:", JSON.stringify(responseData))
+    console.log("[TrexPay] Depósito criado com sucesso:", transactionId)
 
     return {
       success: true,
-      idTransaction: data.idTransaction,
-      qrCode: data.qrCode,
-      qrCodeBase64: data.qrCodeBase64,
-      pixKey: data.pixKey,
-      expiresAt: data.expiresAt,
+      idTransaction: transactionId,
+      qrCode: responseData.qrCode || responseData.qr_code || responseData.qrcode,
+      qrCodeBase64: responseData.qrCodeBase64 || responseData.qr_code_base64 || responseData.qrcodeBase64,
+      pixKey: responseData.pixKey || responseData.pix_key || responseData.copiaecola || responseData.copia_e_cola || responseData.emv,
+      expiresAt: responseData.expiresAt || responseData.expires_at || responseData.expiration,
     }
   } catch (error) {
     console.error("[TrexPay] Erro ao criar depósito:", error)
+    
+    // Verificar tipo específico de erro
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        return {
+          success: false,
+          error: "TIMEOUT_ERROR",
+          message: "Tempo limite excedido ao conectar com a TrexPay. Tente novamente.",
+        }
+      }
+      
+      // Erro de conexão/rede
+      if (error.message.includes('fetch') || error.message.includes('network') || error.message.includes('ECONNREFUSED')) {
+        return {
+          success: false,
+          error: "NETWORK_ERROR",
+          message: "Não foi possível conectar com a TrexPay. Verifique sua conexão.",
+        }
+      }
+      
+      return {
+        success: false,
+        error: "UNKNOWN_ERROR",
+        message: `Erro ao processar pagamento: ${error.message}`,
+      }
+    }
+    
     return {
       success: false,
-      error: "NETWORK_ERROR",
-      message: "Erro de conexão com a TrexPay",
+      error: "UNKNOWN_ERROR",
+      message: "Erro desconhecido ao processar pagamento. Tente novamente.",
     }
   }
 }

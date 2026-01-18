@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server"
 
 export async function GET() {
+  const trexpayToken = process.env.TREXPAY_TOKEN
+  const trexpaySecret = process.env.TREXPAY_SECRET
+  
   const config = {
     trexpay: {
-      token: process.env.TREXPAY_TOKEN ? "Configurado" : "NAO CONFIGURADO",
-      secret: process.env.TREXPAY_SECRET ? "Configurado" : "NAO CONFIGURADO",
+      token: trexpayToken ? `Configurado (${trexpayToken.substring(0, 8)}...)` : "NAO CONFIGURADO",
+      secret: trexpaySecret ? "Configurado" : "NAO CONFIGURADO",
+      tokenLength: trexpayToken?.length || 0,
+      secretLength: trexpaySecret?.length || 0,
     },
     utmfy: {
       apiToken: process.env.UTMFY_API_TOKEN ? "Configurado" : "NAO CONFIGURADO",
@@ -12,8 +17,52 @@ export async function GET() {
     app: {
       url: process.env.NEXT_PUBLIC_APP_URL || "NAO CONFIGURADO",
       vercelUrl: process.env.VERCEL_URL || "NAO CONFIGURADO",
+      siteUrl: process.env.NEXT_PUBLIC_SITE_URL || "NAO CONFIGURADO",
     },
     environment: process.env.NODE_ENV,
+  }
+
+  // Test TrexPay connection
+  let trexpayConnection = "NAO TESTADO"
+  if (trexpayToken && trexpaySecret) {
+    try {
+      const testResponse = await fetch("https://app.trexpay.com.br/api/wallet/deposit/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({
+          token: trexpayToken,
+          secret: trexpaySecret,
+          postback: "https://example.com/webhook",
+          amount: 1.00,
+          debtor_name: "Teste Conexao",
+          email: "teste@teste.com",
+          debtor_document_number: "12345678900",
+          phone: "+5511999999999",
+          method_pay: "pix",
+        }),
+      })
+
+      const responseText = await testResponse.text()
+      
+      if (testResponse.ok) {
+        trexpayConnection = `CONECTADO - Status ${testResponse.status}`
+        try {
+          const data = JSON.parse(responseText)
+          trexpayConnection += ` - Resposta: ${JSON.stringify(data).substring(0, 200)}...`
+        } catch {
+          trexpayConnection += ` - Resposta: ${responseText.substring(0, 200)}...`
+        }
+      } else {
+        trexpayConnection = `ERRO HTTP ${testResponse.status}: ${responseText.substring(0, 300)}`
+      }
+    } catch (error) {
+      trexpayConnection = `ERRO DE CONEXAO: ${error instanceof Error ? error.message : String(error)}`
+    }
+  } else {
+    trexpayConnection = "CREDENCIAIS NAO CONFIGURADAS"
   }
 
   // Test UTMFY connection
@@ -87,6 +136,7 @@ export async function GET() {
 
   return NextResponse.json({
     ...config,
+    trexpayConnection,
     utmfyConnection,
     webhooks: {
       trexpay: `${baseUrl}/api/webhook/trexpay`,
